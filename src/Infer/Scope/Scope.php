@@ -212,6 +212,14 @@ class Scope
 
     private function getVariableType(Node\Expr\Variable $node)
     {
+        // if (!is_string($node->name)) {
+        //     \Log::debug(get_class($node->name));
+        //     \Log::debug($node->name->name);
+        // }
+        if ($node->name instanceof Node\Expr) {
+            return null;
+        }
+        
         $name = (string) $node->name;
         $line = $node->getAttribute('startLine', 0);
 

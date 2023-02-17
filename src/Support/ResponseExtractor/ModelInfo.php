@@ -24,6 +24,10 @@ use ReflectionClass;
 use ReflectionMethod;
 use SplFileObject;
 
+use Dedoc\Scramble\Support\PhpDoc;
+use PHPStan\PhpDocParser\Ast\PhpDoc\PhpDocNode;
+use PHPStan\PhpDocParser\Ast\PhpDoc\PropertyTagValueNode;
+
 class ModelInfo
 {
     public static array $cache = [];
@@ -58,9 +62,49 @@ class ModelInfo
 
         return $this->displayJson(
             $class,
-            $this->getAttributes($model),
+            // collect($model->getFillable()),
+            // collect($model->getRelations()),
+            // $this->getAttributes($model),
+            $this->getCommentAttributes($model),
             $this->getRelations($model),
         );
+    }
+
+    public function getCommentAttributes(Model $model)
+    {
+        $classReflection = new \ReflectionClass($model);
+
+        $attributes = [];
+        if ($docComment = $classReflection->getDocComment()) {
+
+            $phpDoc = PhpDoc::parse($docComment);
+            
+            // \Log::debug($phpDoc->__toString());
+
+            $propertyTags = $phpDoc->getPropertyTagValues();
+            $propertyReadTags = $phpDoc->getPropertyReadTagValues();
+
+            $attributes = array_merge($propertyTags, $propertyReadTags);
+        }
+
+        $attributes = collect($attributes)
+            ->map(fn (PropertyTagValueNode $property) => [
+                'name' => $property->propertyName,
+                'type' => get_class($property->type) == 'PHPStan\PhpDocParser\Ast\Type\UnionTypeNode' ? $property->type->__toString() : $property->type->name,
+                'increments' => false,
+                'nullable' => false,
+                'default' => '',
+                'unique' => false,
+                'fillable' => $model->isFillable($property->propertyName),
+                'hidden' => $this->attributeIsHidden($property->propertyName, $model),
+                'appended' => null,
+                'cast' => 'attribute',
+            ])
+            ->merge($this->getVirtualAttributes($model, []))
+            ->keyBy('name');
+
+        // \Log::debug($attributes);
+        return $attributes;
     }
 
     public function type()
@@ -74,6 +118,12 @@ class ModelInfo
         }
 
         $modelInfo = $this->handle();
+
+        // if the model class is anonymous user, log
+        // the model info to the console
+        // if (Str::startsWith($modelInfo->get('class'), 'App\Models\AnonymousUser')) {
+        //     \Log::debug($modelInfo);
+        // }
 
         /** @var Model $model */
         $model = app()->make($modelInfo->get('class'));
