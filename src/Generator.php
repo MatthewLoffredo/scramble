@@ -2,12 +2,14 @@
 
 namespace Dedoc\Scramble;
 
+use Dedoc\Scramble\Infer\Services\FileParser;
 use Dedoc\Scramble\Support\Generator\InfoObject;
 use Dedoc\Scramble\Support\Generator\OpenApi;
 use Dedoc\Scramble\Support\Generator\Operation;
 use Dedoc\Scramble\Support\Generator\Path;
 use Dedoc\Scramble\Support\Generator\Server;
 use Dedoc\Scramble\Support\Generator\TypeTransformer;
+use Dedoc\Scramble\Support\Generator\UniqueNamesOptionsCollection;
 use Dedoc\Scramble\Support\OperationBuilder;
 use Dedoc\Scramble\Support\RouteInfo;
 use Dedoc\Scramble\Support\ServerFactory;
@@ -25,11 +27,22 @@ class Generator
 
     private ServerFactory $serverFactory;
 
-    public function __construct(TypeTransformer $transformer, OperationBuilder $operationBuilder, ServerFactory $serverFactory)
-    {
+    private FileParser $fileParser;
+
+    private Infer $infer;
+
+    public function __construct(
+        TypeTransformer $transformer,
+        OperationBuilder $operationBuilder,
+        ServerFactory $serverFactory,
+        FileParser $fileParser,
+        Infer $infer
+    ) {
         $this->transformer = $transformer;
         $this->operationBuilder = $operationBuilder;
         $this->serverFactory = $serverFactory;
+        $this->fileParser = $fileParser;
+        $this->infer = $infer;
     }
 
     public function __invoke()
@@ -45,6 +58,7 @@ class Generator
                         $method = $route->methods()[0];
                         $action = $route->getAction('uses');
 
+                        dump("Error when analyzing route '$method $route->uri' ($action): {$e->getMessage()} – ".($e->getFile().' on line '.$e->getLine()));
                         logger()->error("Error when analyzing route '$method $route->uri' ($action): {$e->getMessage()} – ".($e->getFile().' on line '.$e->getLine()));
                     }
 
@@ -52,6 +66,7 @@ class Generator
                 }
             })
             ->filter() // Closure based routes are filtered out for now, right here
+            ->sortBy(fn (Operation $o) => $o->tags[0] ?? $o->description)
             ->each(fn (Operation $operation) => $openApi->addPath(
                 Path::make(
                     (string) Str::of($operation->path)
@@ -60,6 +75,8 @@ class Generator
                 )->addOperation($operation)
             ))
             ->toArray();
+
+        $this->setUniqueOperationId($openApi);
 
         $this->moveSameAlternativeServersToPath($openApi);
 
@@ -136,7 +153,7 @@ class Generator
 
     private function routeToOperation(OpenApi $openApi, Route $route)
     {
-        $routeInfo = new RouteInfo($route);
+        $routeInfo = new RouteInfo($route, $this->fileParser, $this->infer);
 
         if (! $routeInfo->isClassBased()) {
             return null;
@@ -153,6 +170,7 @@ class Generator
             }
 
             $operations = collect($pathsGroup->pluck('operations')->flatten());
+
             $operationsHaveSameAlternativeServers = $operations->count()
                 && $operations->every(fn (Operation $o) => count($o->servers))
                 && $operations->unique(function (Operation $o) {
@@ -167,6 +185,38 @@ class Generator
 
             foreach ($operations as $operation) {
                 $operation->servers([]);
+            }
+        }
+    }
+
+    private function setUniqueOperationId(OpenApi $openApi)
+    {
+        $names = new UniqueNamesOptionsCollection();
+
+        $this->foreachOperation($openApi, function (Operation $operation) use ($names) {
+            $names->push($operation->getAttribute('operationId'));
+        });
+
+        $this->foreachOperation($openApi, function (Operation $operation, $index) use ($names) {
+            $name = $operation->getAttribute('operationId');
+
+            $operation->setOperationId($names->getUniqueName($name, function (string $fallback) use ($index) {
+                return "{$fallback}_{$index}";
+            }));
+        });
+    }
+
+    private function foreachOperation(OpenApi $openApi, callable $callback)
+    {
+        foreach (collect($openApi->paths)->groupBy('path') as $pathsGroup) {
+            if ($pathsGroup->isEmpty()) {
+                continue;
+            }
+
+            $operations = collect($pathsGroup->pluck('operations')->flatten());
+
+            foreach ($operations as $index => $operation) {
+                $callback($operation, $index);
             }
         }
     }

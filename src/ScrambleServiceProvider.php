@@ -5,19 +5,27 @@ namespace Dedoc\Scramble;
 use Dedoc\Scramble\Extensions\ExceptionToResponseExtension;
 use Dedoc\Scramble\Extensions\OperationExtension;
 use Dedoc\Scramble\Extensions\TypeToSchemaExtension;
+use Dedoc\Scramble\Infer\Extensions\ExtensionsBroker;
 use Dedoc\Scramble\Infer\Extensions\InferExtension;
-use Dedoc\Scramble\Infer\Infer;
-use Dedoc\Scramble\Infer\TypeInferringVisitor;
-use Dedoc\Scramble\Support\ClassAstHelper;
+use Dedoc\Scramble\Infer\Scope\Index;
+use Dedoc\Scramble\Infer\Services\FileParser;
 use Dedoc\Scramble\Support\ExceptionToResponseExtensions\AuthorizationExceptionToResponseExtension;
 use Dedoc\Scramble\Support\ExceptionToResponseExtensions\HttpExceptionToResponseExtension;
 use Dedoc\Scramble\Support\ExceptionToResponseExtensions\NotFoundExceptionToResponseExtension;
 use Dedoc\Scramble\Support\ExceptionToResponseExtensions\ValidationExceptionToResponseExtension;
 use Dedoc\Scramble\Support\Generator\Components;
 use Dedoc\Scramble\Support\Generator\TypeTransformer;
-use Dedoc\Scramble\Support\InferHandlers\ModelClassHandler;
-use Dedoc\Scramble\Support\InferHandlers\PhpDocHandler;
+use Dedoc\Scramble\Support\InferExtensions\AbortHelpersExceptionInfer;
+use Dedoc\Scramble\Support\InferExtensions\JsonResourceCallsTypeInfer;
+use Dedoc\Scramble\Support\InferExtensions\JsonResourceCreationInfer;
+use Dedoc\Scramble\Support\InferExtensions\JsonResourceTypeInfer;
+use Dedoc\Scramble\Support\InferExtensions\ModelExtension;
+use Dedoc\Scramble\Support\InferExtensions\PossibleExceptionInfer;
+use Dedoc\Scramble\Support\InferExtensions\ResourceCollectionTypeInfer;
+use Dedoc\Scramble\Support\InferExtensions\ResponseFactoryTypeInfer;
+use Dedoc\Scramble\Support\InferExtensions\ValidatorTypeInfer;
 use Dedoc\Scramble\Support\OperationBuilder;
+use Dedoc\Scramble\Support\OperationExtensions\DeprecationExtension;
 use Dedoc\Scramble\Support\OperationExtensions\ErrorResponsesExtension;
 use Dedoc\Scramble\Support\OperationExtensions\RequestBodyExtension;
 use Dedoc\Scramble\Support\OperationExtensions\RequestEssentialsExtension;
@@ -30,6 +38,7 @@ use Dedoc\Scramble\Support\TypeToSchemaExtensions\JsonResourceTypeToSchema;
 use Dedoc\Scramble\Support\TypeToSchemaExtensions\LengthAwarePaginatorTypeToSchema;
 use Dedoc\Scramble\Support\TypeToSchemaExtensions\ModelToSchema;
 use Dedoc\Scramble\Support\TypeToSchemaExtensions\ResponseTypeToSchema;
+use PhpParser\ParserFactory;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
 
@@ -43,7 +52,17 @@ class ScrambleServiceProvider extends PackageServiceProvider
             ->hasRoute('web')
             ->hasViews('scramble');
 
-        $this->app->when([Infer::class, ClassAstHelper::class, TypeInferringVisitor::class])
+        $this->app->singleton(FileParser::class, function () {
+            return new FileParser(
+                (new ParserFactory)->create(ParserFactory::PREFER_PHP7)
+            );
+        });
+
+        $this->app->singleton(Index::class);
+
+        $this->app->singleton(Infer::class);
+
+        $this->app->when(ExtensionsBroker::class)
             ->needs('$extensions')
             ->give(function () {
                 $extensions = config('scramble.extensions', []);
@@ -52,21 +71,27 @@ class ScrambleServiceProvider extends PackageServiceProvider
                     $extensions,
                     fn ($e) => is_a($e, InferExtension::class, true),
                 ));
-                $inferExtensions = array_map(
-                    fn ($inferExtensionClass) => new $inferExtensionClass(),
-                    $inferExtensionsClasses,
+
+                $inferExtensionsClasses = array_merge([
+                    ModelExtension::class,
+                ], $inferExtensionsClasses);
+
+                return array_merge(
+                    [
+                        new PossibleExceptionInfer(),
+                        new AbortHelpersExceptionInfer(),
+
+                        new JsonResourceCallsTypeInfer(),
+                        new JsonResourceCreationInfer(),
+                        new JsonResourceTypeInfer(),
+                        new ValidatorTypeInfer(),
+                        new ResourceCollectionTypeInfer(),
+                        new ResponseFactoryTypeInfer(),
+                    ],
+                    array_map(function ($class) {
+                        return app($class);
+                    }, $inferExtensionsClasses)
                 );
-
-                return array_merge($inferExtensions, DefaultExtensions::infer());
-            });
-
-        $this->app->when([Infer::class, ClassAstHelper::class, TypeInferringVisitor::class])
-            ->needs('$handlers')
-            ->give(function () {
-                return [
-                    new PhpDocHandler(),
-                    new ModelClassHandler(),
-                ];
             });
 
         $this->app->when(OperationBuilder::class)
@@ -84,6 +109,7 @@ class ScrambleServiceProvider extends PackageServiceProvider
                     RequestBodyExtension::class,
                     ErrorResponsesExtension::class,
                     ResponseExtension::class,
+                    DeprecationExtension::class,
                 ], $operationExtensions);
             });
 

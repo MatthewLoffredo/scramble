@@ -1,12 +1,13 @@
 <?php
 
-use Dedoc\Scramble\Infer\Infer;
+use Dedoc\Scramble\Infer;
 use Dedoc\Scramble\Support\Generator\Components;
 use Dedoc\Scramble\Support\Generator\TypeTransformer;
 use Dedoc\Scramble\Support\Type\ArrayItemType_;
 use Dedoc\Scramble\Support\Type\ArrayType;
 use Dedoc\Scramble\Support\Type\BooleanType;
 use Dedoc\Scramble\Support\Type\IntegerType;
+use Dedoc\Scramble\Support\Type\Literal\LiteralStringType;
 use Dedoc\Scramble\Support\Type\NullType;
 use Dedoc\Scramble\Support\Type\ObjectType;
 use Dedoc\Scramble\Support\Type\StringType;
@@ -15,6 +16,7 @@ use Dedoc\Scramble\Support\TypeToSchemaExtensions\AnonymousResourceCollectionTyp
 use Dedoc\Scramble\Support\TypeToSchemaExtensions\EnumToSchema;
 use Dedoc\Scramble\Support\TypeToSchemaExtensions\JsonResourceTypeToSchema;
 use Illuminate\Http\Resources\Json\JsonResource;
+
 use function Spatie\Snapshots\assertMatchesSnapshot;
 
 it('transforms simple types', function ($type, $openApiArrayed) {
@@ -24,6 +26,7 @@ it('transforms simple types', function ($type, $openApiArrayed) {
 })->with([
     [new IntegerType(), ['type' => 'integer']],
     [new StringType(), ['type' => 'string']],
+    [new LiteralStringType('wow'), ['type' => 'string', 'example' => 'wow']],
     [new BooleanType(), ['type' => 'boolean']],
     [new ArrayType([
         new ArrayItemType_(0, new StringType()),
@@ -85,6 +88,18 @@ it('gets json resource type with when loaded', function () {
     $extension = new JsonResourceTypeToSchema($infer, $transformer, $components);
 
     $type = new ObjectType(ComplexTypeHandlersWithWhenLoaded_SampleType::class);
+
+    assertMatchesSnapshot($extension->toSchema($type)->toArray());
+});
+
+it('gets json resource type with when counted', function () {
+    $transformer = new TypeTransformer($infer = app(Infer::class), $components = new Components, [
+        JsonResourceTypeToSchema::class,
+        AnonymousResourceCollectionTypeToSchema::class,
+    ]);
+    $extension = new JsonResourceTypeToSchema($infer, $transformer, $components);
+
+    $type = new ObjectType(ComplexTypeHandlersWithWhenCounted_SampleType::class);
 
     assertMatchesSnapshot($extension->toSchema($type)->toArray());
 });
@@ -184,6 +199,23 @@ class ComplexTypeHandlersWithWhenLoaded_SampleType extends JsonResource
             'foo_collection' => ComplexTypeHandlersWithWhen_SampleType::collection($this->foo),
             'bar' => $this->whenLoaded('bar', fn () => 1),
             'bar_nullable' => $this->whenLoaded('bar', fn () => 's', null),
+        ];
+    }
+}
+
+class ComplexTypeHandlersWithWhenCounted_SampleType extends JsonResource
+{
+    public function toArray($request)
+    {
+        return [
+            'bar_single' => $this->whenCounted('bar'),
+            'bar_fake_count' => $this->whenCounted('bar', 1),
+            'bar_different_literal_types' => $this->whenCounted('bar', fn () => 1, 5),
+            'bar_identical_literal_types' => $this->whenCounted('bar', fn () => 1, 1),
+            'bar_string' => $this->whenCounted('bar', fn () => '2'),
+            'bar_int' => $this->whenCounted('bar', fn () => 1),
+            'bar_useless' => $this->whenCounted('bar', null),
+            'bar_nullable' => $this->whenCounted('bar', fn () => 3, null),
         ];
     }
 }

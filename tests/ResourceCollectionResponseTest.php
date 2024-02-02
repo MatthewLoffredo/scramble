@@ -1,6 +1,6 @@
 <?php
 
-use Dedoc\Scramble\Infer\Infer;
+use Dedoc\Scramble\Infer;
 use Dedoc\Scramble\Scramble;
 use Dedoc\Scramble\Support\Generator\Components;
 use Dedoc\Scramble\Support\Generator\TypeTransformer;
@@ -8,6 +8,7 @@ use Dedoc\Scramble\Support\Type\ObjectType;
 use Dedoc\Scramble\Support\TypeToSchemaExtensions\JsonResourceTypeToSchema;
 use Illuminate\Routing\Route;
 use Illuminate\Support\Facades\Route as RouteFacade;
+
 use function Spatie\Snapshots\assertMatchesSnapshot;
 
 test('transforms collection with toArray only', function () {

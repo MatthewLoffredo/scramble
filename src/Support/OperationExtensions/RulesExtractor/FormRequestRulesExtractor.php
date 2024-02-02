@@ -2,7 +2,7 @@
 
 namespace Dedoc\Scramble\Support\OperationExtensions\RulesExtractor;
 
-use Dedoc\Scramble\Support\ClassAstHelper;
+use Dedoc\Scramble\Infer;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Route;
 use Illuminate\Support\Arr;
@@ -34,29 +34,16 @@ class FormRequestRulesExtractor
     {
         $requestClassName = $this->getFormRequestClassName();
 
-        /** @var ClassAstHelper $classHelper */
-        $classHelper = app()->make(ClassAstHelper::class, [
-            'class' => $requestClassName,
-        ]);
+        $method = Infer\Reflector\ClassReflector::make($requestClassName)->getMethod('rules');
 
-        /** @var Node\Stmt\ClassMethod|null $rulesMethodNode */
-        $rulesMethodNode = $classHelper->findFirstNode(
-            fn (Node $node) => $node instanceof Node\Stmt\ClassMethod && $node->name->name === 'rules',
-        );
+        $rulesMethodNode = $method->getAstNode();
 
-        if (! $rulesMethodNode) {
-            return null;
-        }
-
-        return new ValidationNodesResult(
-            (new NodeFinder())->find(
-                Arr::wrap($rulesMethodNode->stmts),
-                fn (Node $node) => $node instanceof Node\Expr\ArrayItem
-                    && $node->key instanceof Node\Scalar\String_
-                    && $classHelper->scope->getType($node)->getAttribute('docNode')
-            ),
-            $classHelper->scope,
-        );
+        return new ValidationNodesResult((new NodeFinder())->find(
+            Arr::wrap($rulesMethodNode->stmts),
+            fn (Node $node) => $node instanceof Node\Expr\ArrayItem
+                && $node->key instanceof Node\Scalar\String_
+                && $node->getAttribute('parsedPhpDoc')
+        ));
     }
 
     public function extract(Route $route)

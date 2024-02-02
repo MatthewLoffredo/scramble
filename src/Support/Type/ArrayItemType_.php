@@ -2,7 +2,7 @@
 
 namespace Dedoc\Scramble\Support\Type;
 
-use Symfony\Component\Translation\Exception\LogicException;
+use LogicException;
 
 class ArrayItemType_ extends AbstractType
 {
@@ -13,19 +13,18 @@ class ArrayItemType_ extends AbstractType
 
     public bool $isOptional;
 
+    public bool $shouldUnpack;
+
     public function __construct(
         $key,
         Type $value,
-        bool $isOptional = false
+        bool $isOptional = false,
+        bool $shouldUnpack = false
     ) {
         $this->key = $key;
         $this->value = $value;
         $this->isOptional = $isOptional;
-    }
-
-    public function children(): array
-    {
-        return [$this->value];
+        $this->shouldUnpack = $shouldUnpack;
     }
 
     public function nodes(): array
@@ -40,7 +39,7 @@ class ArrayItemType_ extends AbstractType
 
     public function isSame(Type $type)
     {
-        throw new LogicException('ArrayItemType_ should not be checked.');
+        throw new LogicException('ArrayItemType_ should never be checked.');
     }
 
     public function toString(): string

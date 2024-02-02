@@ -2,62 +2,52 @@
 
 namespace Dedoc\Scramble\Support\Type;
 
+use Dedoc\Scramble\Infer\Services\RecursionGuard;
+
 class TypeWalker
 {
     private array $visitedNodes = [];
 
-    public function find(Type $type, callable $lookup): array
-    {
-        if (in_array($type, $this->visitedNodes)) {
-            return [];
-        }
-        $this->visitedNodes[] = $type;
-
-        $foundTypes = $lookup($type) ? [$type] : [];
-
-        $children = $type instanceof ObjectType ? [] : $type->children();
-        foreach ($children as $child) {
-            $foundTypes = array_merge($foundTypes, $this->find($child, $lookup));
-        }
-
-        return $foundTypes;
-    }
-
     public function first(Type $type, callable $lookup): ?Type
     {
-        if (in_array($type, $this->visitedNodes)) {
-            return null;
-        }
-        $this->visitedNodes[] = $type;
-
-        if ($lookup($type)) {
-            return $type;
-        }
-
-        $children = $type instanceof ObjectType ? [] : $type->children();
-        foreach ($children as $child) {
-            if ($foundType = $this->first($child, $lookup)) {
-                return $foundType;
+        return RecursionGuard::run($type, function () use ($type, $lookup) {
+            if ($lookup($type)) {
+                return $type;
             }
-        }
 
-        return null;
+            $publicChildren = collect($type->nodes())
+                ->flatMap(fn ($node) => is_array($type->$node) ? array_values($type->$node) : [$type->$node]);
+
+            foreach ($publicChildren as $child) {
+                if ($foundType = $this->first($child, $lookup)) {
+                    return $foundType;
+                }
+            }
+
+            return null;
+        }, fn () => null);
     }
 
-    public static function replace(Type $subject, Type $search, Type $replace): Type
+    public function replace(Type $subject, callable $replacer): Type
     {
-        if ($subject === $search) {
-            return $replace;
+        if ($replaced = $replacer($subject)) {
+            return $replaced;
         }
 
-        $propertiesWithNodes = $subject instanceof ObjectType ? [] : $subject->nodes();
+        if (in_array($subject, $this->visitedNodes)) {
+            return $subject;
+        }
+        $this->visitedNodes[] = $subject;
+
+        $propertiesWithNodes = $subject->nodes();
+
         foreach ($propertiesWithNodes as $propertyWithNode) {
             $node = $subject->$propertyWithNode;
             if (! is_array($node)) {
-                $subject->$propertyWithNode = static::replace($node, $search, $replace);
+                $subject->$propertyWithNode = TypeHelper::unpackIfArrayType($this->replace($node, $replacer));
             } else {
                 foreach ($node as $index => $item) {
-                    $subject->$propertyWithNode[$index] = static::replace($item, $search, $replace);
+                    $subject->$propertyWithNode[$index] = TypeHelper::unpackIfArrayType($this->replace($item, $replacer));
                 }
             }
         }

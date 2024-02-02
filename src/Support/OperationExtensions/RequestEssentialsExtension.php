@@ -3,7 +3,7 @@
 namespace Dedoc\Scramble\Support\OperationExtensions;
 
 use Dedoc\Scramble\Extensions\OperationExtension;
-use Dedoc\Scramble\Infer\Infer;
+use Dedoc\Scramble\Infer;
 use Dedoc\Scramble\Support\Generator\OpenApi;
 use Dedoc\Scramble\Support\Generator\Operation;
 use Dedoc\Scramble\Support\Generator\Parameter;
@@ -13,11 +13,19 @@ use Dedoc\Scramble\Support\Generator\Types\BooleanType;
 use Dedoc\Scramble\Support\Generator\Types\IntegerType;
 use Dedoc\Scramble\Support\Generator\Types\NumberType;
 use Dedoc\Scramble\Support\Generator\Types\StringType;
+use Dedoc\Scramble\Support\Generator\Types\Type;
 use Dedoc\Scramble\Support\Generator\TypeTransformer;
+use Dedoc\Scramble\Support\Generator\UniqueNameOptions;
+use Dedoc\Scramble\Support\PhpDoc;
 use Dedoc\Scramble\Support\RouteInfo;
 use Dedoc\Scramble\Support\ServerFactory;
+use Dedoc\Scramble\Support\Type\ObjectType;
+use Illuminate\Contracts\Container\BindingResolutionException;
+use Illuminate\Database\Eloquent\Concerns\HasUuids;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Route;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Str;
 use PHPStan\PhpDocParser\Ast\PhpDoc\ParamTagValueNode;
 use PHPStan\PhpDocParser\Ast\PhpDoc\PhpDocNode;
@@ -50,16 +58,18 @@ class RequestEssentialsExtension extends OperationExtension
                 collect($pathAliases)->values()->map(fn ($v) => '{'.$v.'}')->all(),
                 $routeInfo->route->uri,
             ))
-            ->setTags([
-                ...$this->extractTagsForMethod($routeInfo->class->phpDoc()),
+            ->setTags(array_unique([
+                ...$this->extractTagsForMethod($routeInfo),
                 Str::of(class_basename($routeInfo->className()))->replace('Controller', ''),
-            ])
+            ]))
             ->servers($this->getAlternativeServers($routeInfo->route))
             ->addParameters($pathParams);
 
         if (count($routeInfo->phpDoc()->getTagsByName('@unauthenticated'))) {
             $operation->addSecurity([]);
         }
+
+        $operation->setAttribute('operationId', $this->getOperationId($routeInfo));
     }
 
     /**
@@ -108,13 +118,19 @@ class RequestEssentialsExtension extends OperationExtension
         return $mask($expectedUrl) === $mask($actualUrl);
     }
 
-    private function extractTagsForMethod(PhpDocNode $classPhpDoc)
+    private function extractTagsForMethod(RouteInfo $routeInfo)
     {
+        $classPhpDoc = $routeInfo->reflectionMethod()
+            ? $routeInfo->reflectionMethod()->getDeclaringClass()->getDocComment()
+            : false;
+
+        $classPhpDoc = $classPhpDoc ? PhpDoc::parse($classPhpDoc) : new PhpDocNode([]);
+
         if (! count($tagNodes = $classPhpDoc->getTagsByName('@tags'))) {
             return [];
         }
 
-        return explode(',', $tagNodes[0]->value->value);
+        return explode(',', array_values($tagNodes)[0]->value->value);
     }
 
     private function getParametersFromString(?string $str)
@@ -156,7 +172,7 @@ class RequestEssentialsExtension extends OperationExtension
          * 2. PhpDoc Typehint
          * 3. String (?)
          */
-        $params = array_map(function (string $paramName) use ($aliases, $reflectionParamsByKeys, $phpDocTypehintParam) {
+        $params = array_map(function (string $paramName) use ($route, $aliases, $reflectionParamsByKeys, $phpDocTypehintParam) {
             $paramName = $aliases[$paramName];
 
             $description = '';
@@ -190,8 +206,10 @@ class RequestEssentialsExtension extends OperationExtension
             ];
             $schemaType = $type ? ($schemaTypesMap[$type] ?? new IntegerType) : new StringType;
 
-            if ($type && ! isset($schemaTypesMap[$type]) && $description === '') {
-                $description = 'The '.Str::of($paramName)->kebab()->replace(['-', '_'], ' ').' ID';
+            $isModelId = $type && ! isset($schemaTypesMap[$type]);
+
+            if ($isModelId) {
+                [$schemaType, $description] = $this->getModelIdTypeAndDescription($schemaType, $type, $paramName, $description, $route->bindingFields()[$paramName] ?? null);
 
                 $schemaType->setAttribute('isModelId', true);
             }
@@ -202,5 +220,90 @@ class RequestEssentialsExtension extends OperationExtension
         }, array_values(array_diff($route->parameterNames(), $this->getParametersFromString($route->getDomain()))));
 
         return [$params, $aliases];
+    }
+
+    private function getModelIdTypeAndDescription(
+        Type $baseType,
+        string $type,
+        string $paramName,
+        string $description,
+        ?string $bindingField,
+    ): array {
+        $defaults = [
+            $baseType,
+            $description ?: 'The '.Str::of($paramName)->kebab()->replace(['-', '_'], ' ').' ID',
+        ];
+
+        if (! is_a($type, Model::class, true)) {
+            return $defaults;
+        }
+
+        try {
+            /** @var Model $modelInstance */
+            $modelInstance = resolve($type);
+        } catch (BindingResolutionException) {
+            return $defaults;
+        }
+
+        $this->infer->analyzeClass($type);
+
+        $modelKeyName = $modelInstance->getKeyName();
+        $routeKeyName = $bindingField ?: $modelInstance->getRouteKeyName();
+
+        if ($description === '') {
+            $keyDescriptionName = in_array($routeKeyName, ['id', 'uuid'])
+                ? Str::upper($routeKeyName)
+                : (string) Str::of($routeKeyName)->lower()->kebab()->replace(['-', '_'], ' ');
+
+            $description = 'The '.Str::of($paramName)->kebab()->replace(['-', '_'], ' ').' '.$keyDescriptionName;
+        }
+
+        $modelTraits = class_uses($type);
+        if ($routeKeyName === $modelKeyName && Arr::has($modelTraits, HasUuids::class)) {
+            return [(new StringType)->format('uuid'), $description];
+        }
+
+        return [$this->openApiTransformer->transform(
+            (new ObjectType($type))->getPropertyType($routeKeyName),
+        ), $description];
+    }
+
+    private function getOperationId(RouteInfo $routeInfo)
+    {
+        $routeClassName = $routeInfo->className() ?: '';
+
+        return new UniqueNameOptions(
+            eloquent: (function () use ($routeInfo) {
+                // Manual operation ID setting.
+                if (
+                    ($operationId = $routeInfo->phpDoc()->getTagsByName('@operationId'))
+                    && ($value = trim(Arr::first($operationId)?->value?->value))
+                ) {
+                    return $value;
+                }
+
+                // Using route name as operation ID if set. We need to avoid using generated route names as this
+                // will result gibberish operation IDs when routes without names are cached.
+                if (($name = $routeInfo->route->getName()) && ! Str::startsWith($name, 'generated::')) {
+                    return Str::startsWith($name, 'api.') ? Str::replaceFirst('api.', '', $name) : $name;
+                }
+
+                // If no name and no operationId manually set, falling back to controller and method name (unique implementation).
+                return null;
+            })(),
+            unique: collect(explode('\\', Str::endsWith($routeClassName, 'Controller') ? Str::replaceLast('Controller', '', $routeClassName) : $routeClassName))
+                ->filter()
+                ->push($routeInfo->methodName())
+                ->map(function ($part) {
+                    if ($part === Str::upper($part)) {
+                        return Str::lower($part);
+                    }
+
+                    return Str::camel($part);
+                })
+                ->reject(fn ($p) => in_array(Str::lower($p), ['app', 'http', 'api', 'controllers', 'invoke']))
+                ->values()
+                ->toArray(),
+        );
     }
 }

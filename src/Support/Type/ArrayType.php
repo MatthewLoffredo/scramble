@@ -19,11 +19,6 @@ class ArrayType extends AbstractType
         return ['items'];
     }
 
-    public function children(): array
-    {
-        return $this->items;
-    }
-
     public function isSame(Type $type)
     {
         return false;

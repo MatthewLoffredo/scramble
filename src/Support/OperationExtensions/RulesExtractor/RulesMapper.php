@@ -115,7 +115,7 @@ class RulesMapper
 
     public function min(Type $type, $params)
     {
-        if ($type instanceof NumberType) {
+        if ($type instanceof NumberType || $type instanceof ArrayType) {
             $type->setMin((float) $params[0]);
         }
 
@@ -124,7 +124,7 @@ class RulesMapper
 
     public function max(Type $type, $params)
     {
-        if ($type instanceof NumberType) {
+        if ($type instanceof NumberType || $type instanceof ArrayType) {
             $type->setMax((float) $params[0]);
         }
 
@@ -156,5 +156,19 @@ class RulesMapper
         return $this->openApiTransformer->transform(
             new ObjectType($enumName)
         );
+    }
+
+    public function image(Type $type)
+    {
+        return $this->file($type);
+    }
+
+    public function file(Type $type)
+    {
+        if ($type instanceof UnknownType) {
+            $type = $this->string($type);
+        }
+
+        return $type->format('binary');
     }
 }

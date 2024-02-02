@@ -12,7 +12,10 @@ use Illuminate\Support\Facades\Route as RouteFacade;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Enum;
+
 use function Spatie\Snapshots\assertMatchesSnapshot;
+
+// @todo: move rules from here to Generator/Request/ValidationRulesDocumentation test
 
 it('extract rules from array like rules', function () {
     $rules = [
@@ -129,6 +132,84 @@ it('supports exists rule', function () {
 
     expect($type)->toBeInstanceOf(StringType::class)
         ->and($type->format)->toBe('email');
+});
+
+it('supports image rule', function () {
+    $rules = [
+        'image' => 'required|image',
+    ];
+
+    $type = app()->make(RulesToParameters::class, ['rules' => $rules])->handle()[0]->schema->type;
+
+    expect($type)->toBeInstanceOf(StringType::class)
+        ->and($type->format)->toBe('binary');
+});
+
+it('supports file rule', function () {
+    $rules = [
+        'file' => 'required|file',
+    ];
+
+    $type = app()->make(RulesToParameters::class, ['rules' => $rules])->handle()[0]->schema->type;
+
+    expect($type)->toBeInstanceOf(StringType::class)
+        ->and($type->format)->toBe('binary');
+});
+
+it('converts min rule into "minimum" for numeric fields', function () {
+    $rules = [
+        'num' => ['int', 'min:8'],
+    ];
+
+    $params = app()->make(RulesToParameters::class, ['rules' => $rules])->handle();
+
+    expect($params = collect($params)->all())
+        ->toHaveCount(1)
+        ->and($params[0]->schema->type)
+        ->toBeInstanceOf(\Dedoc\Scramble\Support\Generator\Types\NumberType::class)
+        ->toHaveKey('minimum', 8);
+});
+
+it('converts max rule into "maximum" for numeric fields', function () {
+    $rules = [
+        'num' => ['int', 'max:8'],
+    ];
+
+    $params = app()->make(RulesToParameters::class, ['rules' => $rules])->handle();
+
+    expect($params = collect($params)->all())
+        ->toHaveCount(1)
+        ->and($params[0]->schema->type)
+        ->toBeInstanceOf(\Dedoc\Scramble\Support\Generator\Types\NumberType::class)
+        ->toHaveKey('maximum', 8);
+});
+
+it('converts min rule into "minItems" for array fields', function () {
+    $rules = [
+        'num' => ['array', 'min:8'],
+    ];
+
+    $params = app()->make(RulesToParameters::class, ['rules' => $rules])->handle();
+
+    expect($params = collect($params)->all())
+        ->toHaveCount(1)
+        ->and($params[0]->schema->type)
+        ->toBeInstanceOf(\Dedoc\Scramble\Support\Generator\Types\ArrayType::class)
+        ->toHaveKey('minItems', 8);
+});
+
+it('converts max rule into "maxItems" for array fields', function () {
+    $rules = [
+        'num' => ['array', 'max:8'],
+    ];
+
+    $params = app()->make(RulesToParameters::class, ['rules' => $rules])->handle();
+
+    expect($params = collect($params)->all())
+        ->toHaveCount(1)
+        ->and($params[0]->schema->type)
+        ->toBeInstanceOf(\Dedoc\Scramble\Support\Generator\Types\ArrayType::class)
+        ->toHaveKey('maxItems', 8);
 });
 
 it('extracts rules from request->validate call', function () {

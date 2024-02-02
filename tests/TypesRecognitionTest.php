@@ -1,21 +1,22 @@
 <?php
 
-use Dedoc\Scramble\Infer\Infer;
+use Dedoc\Scramble\Infer;
+use Dedoc\Scramble\Infer\Scope\Index;
 use Dedoc\Scramble\PhpDoc\PhpDocTypeHelper;
-use Dedoc\Scramble\PhpDoc\PhpDocTypeWalker;
-use Dedoc\Scramble\PhpDoc\ResolveFqnPhpDocTypeVisitor;
 use Dedoc\Scramble\Support\Generator\Components;
 use Dedoc\Scramble\Support\Generator\TypeTransformer;
 use Dedoc\Scramble\Support\PhpDoc;
-use Illuminate\Http\Resources\Json\JsonResource;
+
 use function Spatie\Snapshots\assertMatchesSnapshot;
+
+// @todo move all tests into PhpDoc/PhpDocTypeHelperTest
 
 function getTypeFromDoc(string $phpDoc)
 {
     $docNode = PhpDoc::parse($phpDoc);
     $varNode = $docNode->getVarTagValues()[0];
 
-    return (new TypeTransformer(new Infer, new Components))
+    return (new TypeTransformer(new Infer(new Index), new Components))
         ->transform(PhpDocTypeHelper::toType($varNode->type));
 }
 
@@ -23,8 +24,6 @@ function getPhpTypeFromDoc(string $phpDoc)
 {
     $docNode = PhpDoc::parse($phpDoc);
     $varNode = $docNode->getVarTagValues()[0];
-
-    PhpDocTypeWalker::traverse($varNode->type, [new ResolveFqnPhpDocTypeVisitor(fn ($s) => $s)]);
 
     return PhpDocTypeHelper::toType($varNode->type);
 }
@@ -102,34 +101,11 @@ it('handles union type', function () {
     assertMatchesSnapshot($result ? $result->toArray() : null);
 });
 
-class TestResource extends JsonResource
-{
-    public function toArray($request)
-    {
-        return [
-            /** @var array<string, DestResource> */
-            'sample' => some_unparsable_method(),
-        ];
-    }
-}
+it('handles unions of string literals', function ($phpDoc) {
+    $result = getTypeFromDoc($phpDoc);
 
-class DestResource extends JsonResource
-{
-    public function toArray($request)
-    {
-        return [
-            'id' => 1,
-        ];
-    }
-}
-
-class SimpleTestResource extends JsonResource
-{
-    public function toArray($request)
-    {
-        return [
-            /** @var array<string> nice sample */
-            'sample' => some_unparsable_method(),
-        ];
-    }
-}
+    assertMatchesSnapshot($result ? $result->toArray() : null);
+})->with([
+    "/** @var 'foo'|'bar' */",
+    "/** @var 'foo'|'bar'|string */",
+]);

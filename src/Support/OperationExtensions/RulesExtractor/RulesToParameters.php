@@ -41,6 +41,7 @@ class RulesToParameters
         return collect($this->rules)
             ->map(fn ($rules, $name) => (new RulesToParameter($name, $rules, $this->nodeDocs[$name] ?? null, $this->openApiTransformer))->generate())
             ->pipe(\Closure::fromCallable([$this, 'handleNested']))
+            ->pipe(\Closure::fromCallable([$this, 'handleConfirmed']))
             ->values()
             ->all();
     }
@@ -86,6 +87,27 @@ class RulesToParameters
 
         return $parameters
             ->merge($nested);
+    }
+
+    private function handleConfirmed(Collection $parameters)
+    {
+        $confirmedParamNameRules = collect($this->rules)
+            ->map(fn ($rules, $name) => [$name, Arr::wrap(is_string($rules) ? explode('|', $rules) : $rules)])
+            ->first(fn ($nameRules) => in_array('confirmed', $nameRules[1]));
+
+        if (! $confirmedParamNameRules) {
+            return $parameters;
+        }
+
+        /** @var Parameter $confirmedParam */
+        $confirmedParam = $parameters->first(fn ($p) => $p->name === $confirmedParamNameRules[0]);
+
+        $parameters->offsetSet(
+            $name = "$confirmedParamNameRules[0]_confirmation",
+            (clone $confirmedParam)->setName($name),
+        );
+
+        return $parameters;
     }
 
     private function setDeepType(Type &$base, string $key, Type $typeToSet)
@@ -199,12 +221,12 @@ class RulesToParameters
                     Arr::wrap($result->node),
                     fn (Node $node) => $node instanceof Node\Expr\ArrayItem
                         && $node->key instanceof Node\Scalar\String_
-                        && $result->scope->getType($node)->getAttribute('docNode')
+                        && $node->getAttribute('parsedPhpDoc')
                 );
 
                 return collect($arrayNodes)
                     ->mapWithKeys(fn (Node\Expr\ArrayItem $item) => [
-                        $item->key->value => $result->scope->getType($item)->getAttribute('docNode'),
+                        $item->key->value => $item->getAttribute('parsedPhpDoc'),
                     ])
                     ->toArray();
             })
