@@ -91,7 +91,7 @@ class ModelInfo
 
         $attributes = collect($attributes)
             ->map(fn (PropertyTagValueNode $property) => [
-                'name' => $property->propertyName,
+                'name' => Str::of($property->propertyName)->replace('$', ''),
                 'type' => get_class($property->type) == 'PHPStan\PhpDocParser\Ast\Type\UnionTypeNode' ? $property->type->__toString() : $property->type->name,
                 'increments' => false,
                 'nullable' => false,
