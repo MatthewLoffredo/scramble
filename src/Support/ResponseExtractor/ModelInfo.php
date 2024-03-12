@@ -101,9 +101,12 @@ class ModelInfo
                 'hidden' => $this->attributeIsHidden($property->propertyName, $model),
                 'appended' => null,
                 'cast' => 'attribute',
-            ])
-            ->merge($this->getVirtualAttributes($model, []))
-            ->keyBy('name');
+            ]);
+
+        $attributes = $this->getVirtualAttributes($model, [])
+            ->merge($attributes)
+            ->keyBy('name')
+            ->sortBy('name');
 
         // \Log::debug($attributes);
         return $attributes;
